@@ -430,6 +430,16 @@ docker delete_veth hostif
 100-veth interface hostif has been deleted
 ```
 
+- **docker set_vlan** *\<interface\>* *\<vlan_id\>*: Set VLAN ID on an
+    interface that is enslaved to a bridge (e.g., VXLAN). The VLAN ID must
+    be between 1 and 4094. The interface is configured with the VLAN as
+    both PVID (ingress untagged) and egress untagged.
+
+``` {.bash}
+docker set_vlan tap0 100
+100-VLAN 100 has been set on interface tap0
+```
+
 ### Linux bridge ("brctl")
 
 ``` {.bash

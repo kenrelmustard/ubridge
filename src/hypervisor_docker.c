@@ -364,12 +364,86 @@ static int cmd_set_mac_addr(hypervisor_conn_t *conn, int argc, char *argv[])
     return (0);
 }
 
+static int cmd_set_vlan(hypervisor_conn_t *conn, int argc, char *argv[])
+{
+    struct nl_handler nlh;
+    struct nlmsg *nlmsg = NULL, *answer = NULL;
+    struct link_req *link_req;
+    struct rtattr *nest;
+    struct bridge_vlan_info vinfo;
+    char *interface = argv[0];
+    unsigned long vlan_id;
+    char *endptr;
+    int ifindex;
+    int err = -1;
+
+    vlan_id = strtoul(argv[1], &endptr, 10);
+    if (*endptr != '\0' || vlan_id < 1 || vlan_id > 4094) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "invalid VLAN ID %s (must be 1-4094)", argv[1]);
+        return (-1);
+    }
+
+    if (strlen(interface) >= IFNAMSIZ) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "interface name is too long");
+        return (-1);
+    }
+
+    if (netlink_open(&nlh, NETLINK_ROUTE)) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "could not open netlink connection");
+        return (-1);
+    }
+
+    if (!(ifindex = if_nametoindex(interface))) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "could not find interface index for %s", interface);
+        goto out;
+    }
+
+    nlmsg = nlmsg_alloc(NLMSG_GOOD_SIZE);
+    answer = nlmsg_alloc(NLMSG_GOOD_SIZE);
+    if (!nlmsg || !answer) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "insufficient memory");
+        goto out;
+    }
+
+    link_req = (struct link_req *)nlmsg;
+    link_req->ifinfomsg.ifi_family = PF_BRIDGE;
+    link_req->ifinfomsg.ifi_index = ifindex;
+    nlmsg->nlmsghdr.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+    nlmsg->nlmsghdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlmsg->nlmsghdr.nlmsg_type = RTM_SETLINK;
+
+    nest = nla_begin_nested(nlmsg, IFLA_AF_SPEC);
+
+    /* Set VLAN as both PVID (ingress untagged) and egress untagged */
+    memset(&vinfo, 0, sizeof(vinfo));
+    vinfo.vid = vlan_id;
+    vinfo.flags = BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED;
+    nla_put_buffer(nlmsg, IFLA_BRIDGE_VLAN_INFO, &vinfo, sizeof(vinfo));
+
+    nla_end_nested(nlmsg, nest);
+
+    if (netlink_transaction(&nlh, nlmsg, answer)) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "could not set VLAN on interface %s (is it a bridge port?)", interface);
+        goto out;
+    }
+
+    hypervisor_send_reply(conn, HSC_INFO_OK, 1, "VLAN %lu has been set on interface %s", vlan_id, interface);
+    err = 0;
+
+out:
+    netlink_close(&nlh);
+    nlmsg_free(answer);
+    nlmsg_free(nlmsg);
+    return (err);
+}
+
 /* Docker commands */
 static hypervisor_cmd_t docker_cmd_array[] = {
    { "create_veth", 2, 2, cmd_create_veth_pair, NULL },
    { "delete_veth", 1, 1, cmd_delete_veth, NULL },
    { "move_to_ns", 3, 3, cmd_move_ns, NULL },
    { "set_mac_addr", 2, 2, cmd_set_mac_addr, NULL },
+   { "set_vlan", 2, 2, cmd_set_vlan, NULL },
    { NULL, -1, -1, NULL, NULL },
 };
 
