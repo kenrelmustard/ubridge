@@ -64,8 +64,8 @@ static int netdev_set_flag(hypervisor_conn_t *conn, const char *name, int flag)
     }
 
     len = strlen(name);
-    if (len == 1 || len >= IFNAMSIZ) {
-        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "name is too long");
+    if (len == 0 || len >= IFNAMSIZ) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "interface name is invalid or too long");
         goto out;
     }
 
@@ -114,7 +114,8 @@ static int cmd_create_vxlan(hypervisor_conn_t *conn, int argc, char *argv[])
     struct link_req *link_req;
     struct rtattr *nest1, *nest2;
     char *ifname = argv[0];
-    unsigned int vni;
+    unsigned long vni_val;
+    char *endptr;
     struct in_addr local_addr;
     struct in_addr remote_addr;
     int err = -1;
@@ -130,9 +131,10 @@ static int cmd_create_vxlan(hypervisor_conn_t *conn, int argc, char *argv[])
         goto out;
     }
 
-    vni = (unsigned int)atoi(argv[1]);
-    if (vni > 16777215) {
-        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "VNI must be between 0 and 16777215");
+    errno = 0;
+    vni_val = strtoul(argv[1], &endptr, 10);
+    if (errno != 0 || *endptr != '\0' || endptr == argv[1] || vni_val > 16777215) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "VNI must be a valid number between 0 and 16777215");
         goto out;
     }
 
@@ -168,7 +170,7 @@ static int cmd_create_vxlan(hypervisor_conn_t *conn, int argc, char *argv[])
     nla_put_string(nlmsg, IFLA_INFO_KIND, "vxlan");
 
     nest2 = nla_begin_nested(nlmsg, IFLA_INFO_DATA);
-    nla_put_u32(nlmsg, IFLA_VXLAN_ID, vni);
+    nla_put_u32(nlmsg, IFLA_VXLAN_ID, (unsigned int)vni_val);
     nla_put_buffer(nlmsg, IFLA_VXLAN_LOCAL, &local_addr, sizeof(local_addr));
 
     if (has_remote) {
@@ -189,9 +191,9 @@ static int cmd_create_vxlan(hypervisor_conn_t *conn, int argc, char *argv[])
     }
 
     if (has_remote)
-        hypervisor_send_reply(conn, HSC_INFO_OK, 1, "VXLAN interface %s created with VNI %u (local %s, remote %s)", ifname, vni, argv[2], argv[3]);
+        hypervisor_send_reply(conn, HSC_INFO_OK, 1, "VXLAN interface %s created with VNI %lu (local %s, remote %s)", ifname, vni_val, argv[2], argv[3]);
     else
-        hypervisor_send_reply(conn, HSC_INFO_OK, 1, "VXLAN interface %s created with VNI %u (local %s)", ifname, vni, argv[2]);
+        hypervisor_send_reply(conn, HSC_INFO_OK, 1, "VXLAN interface %s created with VNI %lu (local %s)", ifname, vni_val, argv[2]);
     err = 0;
 
 out:
