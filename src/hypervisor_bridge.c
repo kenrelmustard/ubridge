@@ -29,6 +29,11 @@
 #include "nio_ethernet.h"
 #ifdef LINUX_RAW
 #include "nio_linux_raw.h"
+#include <net/if.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <linux/if_bridge.h>
+#include "netlink/nl.h"
 #endif
 #ifdef __APPLE__
 #include "nio_fusion_vmnet.h"
@@ -682,6 +687,88 @@ static int cmd_set_pcap_filter_bridge(hypervisor_conn_t *conn, int argc, char *a
    return (0);
 }
 
+#ifdef LINUX_RAW
+struct link_req {
+  struct nlmsg nlmsg;
+  struct ifinfomsg ifinfomsg;
+};
+
+static int cmd_set_vlan(hypervisor_conn_t *conn, int argc, char *argv[])
+{
+    struct nl_handler nlh;
+    struct nlmsg *nlmsg = NULL, *answer = NULL;
+    struct link_req *link_req;
+    struct rtattr *nest;
+    struct bridge_vlan_info vinfo;
+    char *interface = argv[0];
+    unsigned long vlan_id;
+    char *endptr;
+    int ifindex;
+    int err = -1;
+
+    errno = 0;
+    vlan_id = strtoul(argv[1], &endptr, 10);
+    if (*endptr != '\0' || errno != 0 || vlan_id < 1 || vlan_id > 4094) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "invalid VLAN ID %s (must be 1-4094)", argv[1]);
+        return (-1);
+    }
+
+    if (strlen(interface) >= IFNAMSIZ) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "interface name is too long");
+        return (-1);
+    }
+
+    if (netlink_open(&nlh, NETLINK_ROUTE)) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "could not open netlink connection");
+        return (-1);
+    }
+
+    ifindex = if_nametoindex(interface);
+    if (ifindex == 0) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "could not find interface index for %s", interface);
+        goto out;
+    }
+
+    nlmsg = nlmsg_alloc(NLMSG_GOOD_SIZE);
+    answer = nlmsg_alloc(NLMSG_GOOD_SIZE);
+    if (!nlmsg || !answer) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "insufficient memory");
+        goto out;
+    }
+
+    link_req = (struct link_req *)nlmsg;
+    link_req->ifinfomsg.ifi_family = PF_BRIDGE;
+    link_req->ifinfomsg.ifi_index = ifindex;
+    nlmsg->nlmsghdr.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+    nlmsg->nlmsghdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlmsg->nlmsghdr.nlmsg_type = RTM_SETLINK;
+
+    nest = nla_begin_nested(nlmsg, IFLA_AF_SPEC);
+
+    /* Set VLAN as both PVID (ingress untagged) and egress untagged */
+    memset(&vinfo, 0, sizeof(vinfo));
+    vinfo.vid = vlan_id;
+    vinfo.flags = BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED;
+    nla_put_buffer(nlmsg, IFLA_BRIDGE_VLAN_INFO, &vinfo, sizeof(vinfo));
+
+    nla_end_nested(nlmsg, nest);
+
+    if (netlink_transaction(&nlh, nlmsg, answer)) {
+        hypervisor_send_reply(conn, HSC_ERR_CREATE, 1, "could not set VLAN on interface %s (is it a bridge port?)", interface);
+        goto out;
+    }
+
+    hypervisor_send_reply(conn, HSC_INFO_OK, 1, "VLAN %lu has been set on interface %s", vlan_id, interface);
+    err = 0;
+
+out:
+    netlink_close(&nlh);
+    nlmsg_free(answer);
+    nlmsg_free(nlmsg);
+    return (err);
+}
+#endif
+
 /* Bridge commands */
 static hypervisor_cmd_t bridge_cmd_array[] = {
    { "create", 1, 1, cmd_create_bridge, NULL },
@@ -700,6 +787,7 @@ static hypervisor_cmd_t bridge_cmd_array[] = {
    { "add_nio_ethernet", 2, 2, cmd_add_nio_ethernet, NULL },
 #ifdef LINUX_RAW
    { "add_nio_linux_raw", 2, 2, cmd_add_nio_linux_raw, NULL },
+   { "set_vlan", 2, 2, cmd_set_vlan, NULL },
 #endif
 #ifdef __APPLE__
    { "add_nio_fusion_vmnet", 2, 2, cmd_add_nio_fusion_vmnet, NULL },
