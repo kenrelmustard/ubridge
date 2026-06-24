@@ -254,6 +254,18 @@ bridge add_nio_linux_raw br0 eth0
 100-NIO Linux raw added to bridge 'br0'
 ```
 
+- **bridge set_vlan** *\<interface\>* *\<vlan_id\>*: Set VLAN ID on an
+    interface that is enslaved to a Linux bridge (e.g., for VXLAN). The
+    VLAN ID must be between 1 and 4094. The interface is configured as
+    the PVID (Port VLAN ID for untagged ingress frames) and egress
+    untagged. It requires root access and is supported only on Linux
+    platforms.
+
+``` {.bash}
+bridge set_vlan tap0 100
+100-VLAN 100 has been set on interface tap0
+```
+
 - **bridge add_nio_fusion_vmnet** *\<bridge_name\>*
     *\<vmnet_device\>*: Add a Fusion VMnet NIO. It requires root
     access and is supported only on Mac OS X.
