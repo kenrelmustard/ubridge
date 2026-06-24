@@ -35,3 +35,6 @@ ubridge.ini
 
 # IDE files
 .idea/
+
+# CodeQL temporary files
+_codeql_detected_source_root
